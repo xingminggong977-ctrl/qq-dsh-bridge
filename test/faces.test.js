@@ -1,4 +1,4 @@
-﻿import test from 'node:test';
+import test from 'node:test';
 import assert from 'node:assert/strict';
 import { FACE_NAMES, faceMarker } from '../src/faces.js';
 import { extractMessage } from '../src/dispatch.js';
@@ -58,4 +58,22 @@ test('faces — 名字表里没有重复的 id，也没有空名字', () => {
 		assert.equal(typeof name, 'string');
 		assert.notEqual(name.trim(), '', `id ${id} 没有名字`);
 	}
+});
+
+test('faces — 卡片、合并转发、文件这类段落不再变成一条空消息', () => {
+	const card = extractMessage(event([{ type: 'json', data: { data: '{"prompt":"[分享]"}' } }]));
+	assert.equal(card.text, '[卡片消息]', '分享卡片要说得出是什么，而不是空字符串');
+	assert.equal(extractMessage(event([{ type: 'forward', data: { id: 'x' } }])).text, '[合并转发]');
+	assert.equal(extractMessage(event([{ type: 'file', data: { name: 'a.pdf' } }])).text, '[文件]');
+	const both = extractMessage(event([{ type: 'text', data: { text: '看这个' } }, { type: 'xml', data: {} }]));
+	assert.equal(both.text, '看这个 [卡片消息]');
+});
+
+test('faces — 没见过的段落把类型名亮出来，@ 和被引用的消息不算看不见的东西', () => {
+	assert.equal(extractMessage(event([{ type: 'weather', data: { city: '太原' } }])).text, '[weather]');
+	const at = extractMessage(event([{ type: 'at', data: { qq: '10002' } }, { type: 'text', data: { text: ' 在吗' } }]));
+	assert.equal(at.text, '在吗', '@ 不该变成占位符');
+	const reply = extractMessage(event([{ type: 'reply', data: { id: '9' } }, { type: 'text', data: { text: '就是这条' } }]));
+	assert.equal(reply.text, '就是这条');
+	assert.equal(extractMessage(event([{ type: 'at', data: { qq: '10002' } }])).text, '', '纯 @ 仍然是空');
 });

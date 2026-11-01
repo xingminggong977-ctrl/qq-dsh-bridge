@@ -65,6 +65,24 @@ const EMOJI_SEGMENT_TYPES = new Set(['face', 'sface']);
 const VOICE_SEGMENT_TYPES = new Set(['record']);
 /** Segment types holding a short video; we split it into frames + audio. */
 const VIDEO_SEGMENT_TYPES = new Set(['video']);
+/**
+ * 没有字节、也不是表情，但仍然是一条消息的段。以前这些一律被丢掉，于是一条「分享的卡片」
+ * 或「合并转发」到她那儿就是空字符串——线上他真的发了两条，她只能回「消息是空的，是手滑
+ * 了吗」，连着问了两遍。宁可给她一个看得见的占位，也不要假装什么都没发生。
+ */
+const CARD_SEGMENT_MARKERS = new Map([
+  ['json', '[卡片消息]'],
+  ['xml', '[卡片消息]'],
+  ['forward', '[合并转发]'],
+  ['share', '[链接分享]'],
+  ['music', '[音乐分享]'],
+  ['file', '[文件]'],
+  ['poke', '[戳一戳]'],
+  ['dice', '[骰子]'],
+  ['rps', '[猜拳]'],
+]);
+/** 这些段本来就不带文字：@ 会被剥掉，引用在历史里另算。别把它们当「看不懂的段」。 */
+const SILENT_SEGMENT_TYPES = new Set(['text', 'at', 'reply']);
 
 function pictureSource(segment) {
   return { url: String(segment.data?.url ?? ''), file: String(segment.data?.file ?? '') };
@@ -120,6 +138,11 @@ export function extractMessage(event, { selfId = '', onSticker = null } = {}) {
       markers.push('[语音]');
     } else if (VIDEO_SEGMENT_TYPES.has(segment.type)) {
       markers.push('[视频]');
+    } else if (CARD_SEGMENT_MARKERS.has(segment.type)) {
+      markers.push(CARD_SEGMENT_MARKERS.get(segment.type));
+    } else if (!SILENT_SEGMENT_TYPES.has(segment.type)) {
+      // 完全没见过的段：把类型名亮出来，比让她收到一条空消息强。
+      markers.push(`[${segment.type}]`);
     }
   }
   const voice =
