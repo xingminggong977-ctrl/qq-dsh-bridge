@@ -52,7 +52,7 @@ test('POST /node/send refuses anyone but the owner', async (t) => {
 
   const reply = await harness.nodeFetch('/node/send', {
     method: 'POST',
-    body: { to: '10001', text: '早安' },
+    body: { to: '99999', text: '早安' },
   });
 
   assert.equal(reply.status, 403);
