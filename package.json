@@ -1,0 +1,20 @@
+{
+  "name": "dsh-qq-bridge",
+  "version": "1.0.0",
+  "private": true,
+  "description": "QQ <-> DSH bridge: NapCat OneBot 11 WS client, SQLite queue, HTTP long-poll for the local DSH node.",
+  "type": "module",
+  "main": "src/app.js",
+  "bin": {
+    "dsh-qq-bridge": "bin/bridge.js"
+  },
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "start": "node bin/bridge.js",
+    "test": "node --test test/*.test.js"
+  },
+  "dependencies": {},
+  "devDependencies": {}
+}

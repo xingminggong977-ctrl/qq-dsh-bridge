@@ -1,0 +1,160 @@
+# dsh-qq-bridge
+
+NapCat(OneBot 11) ⇄ SQLite 队列 ⇄ 本机 DSH node 的云端桥接服务。协议契约见 `../PROTOCOL.md`，
+本实现不增删任何字段或端点。
+
+零运行时依赖（`dependencies: {}`），只用 Node 24 内建能力：`node:http`、`node:sqlite`（`DatabaseSync`）、
+`node:crypto`、`node:fs`、全局 `WebSocket`（客户端）与 `fetch`。
+
+## 运行
+
+```bash
+node bin/bridge.js          # 或 npm start
+node --test test/           # 或 npm test
+```
+
+配置全部来自环境变量，不读配置文件、不新增变量：
+
+| 变量 | 默认值 | 说明 |
+| --- | --- | --- |
+| `NODE_TOKEN` | 必填 | `/node/*`、`/blob/*` 的 Bearer token；缺失即启动失败 |
+| `NAPCAT_WS_URL` | `ws://127.0.0.1:3001` | NapCat 的 OneBot 11 正向 WS 地址（bridge 是客户端） |
+| `NAPCAT_ACCESS_TOKEN` | 空 | 连 NapCat 时作为 `Authorization: Bearer` 头发送 |
+| `BRIDGE_HOST` | `127.0.0.1` | 只绑回环；`0.0.0.0` 等通配地址启动即退出 |
+| `BRIDGE_PORT` | `8787` | |
+| `OWNER_QQ` | 空 | 逗号分隔，匹配的 userId 在 Task 里 `isOwner: true` |
+| `BACKLOG_TTL_MS` | `1800000` | 队列存活上限，超时丢弃并发固定文案 |
+| `INBOUND_SILENT_MS` | `180000` | WebSocket 连着却不来任何帧超过这么久，就给主人发一句「我这边好像收不到消息了」。NapCat 每 30 秒推一次心跳，正常聊天碰不到这个阈值 |
+| `DB_PATH` | `/var/lib/dsh-qq-bridge/queue.db` | |
+| `BLOB_DIR` | `/var/lib/dsh-qq-bridge/blobs` | 图片落盘目录 |
+| `QQ_FILE_ROOTS` | `/var/lib/dsh-qq-agent/workspace:/tmp` | `/node/send_file` 肯打开哪些目录（分隔符跟平台走）。这是那条路由的全部安全性：路径先 `realpath` 再按前缀判，`/etc/shadow` 发不出去 |
+| `PROACTIVE_ENABLED` | `on` | `off` 一次关掉「主动开口」 |
+| `PROACTIVE_MAX_PER_DAY` | `30` | 主动发出的条数上限（线上现设 **4**） |
+| `PROACTIVE_SPREAD_OVER_DAY` | `on` | 额度按时间摊开：到 25% 的钟点最多 1 条、50% 最多 2 条……否则早上就能把一天的说完，晚上一句没有 |
+| `PROACTIVE_MAX_ASKS_PER_DAY` | `8` | 询问次数上限（问了没话也算钱，线上现设 4） |
+| `PROACTIVE_MIN_GAP_MS` | `5400000` | 两次询问的最小间隔（线上现设 3 小时） |
+| `PROACTIVE_REQUIRE_ACTIVITY` | `on` | 只有「上次问过之后有新素材」才再问；世界里的新鲜事也算素材 |
+| `PROACTIVE_QUIET_FROM` / `_TO` | `23` / `8` | 安静时段（服务器本地时区），跨零点 |
+| `WORLD_LIFE_ENABLED` | `on` | 她的世界事件（`life-feed.jsonl`）能不能当开口由头 |
+| `WORLD_LIFE_MAX_PER_DAY` | `2` | 一天最多几次「拿特别的事当由头」开口 |
+| `WORLD_LIFE_WINDOW_HOURS` | `6` | 只在几小时内发生的事才算新鲜 |
+| `WORLD_LIFE_FILE` | `/opt/whale-craft/life-feed.jsonl` | 事件流路径（由 whale-craft 侧写，bridge 只读） |
+| `WORLD_LIFE_STATE` | `/var/lib/dsh-qq-bridge/world-life.json` | 已说过哪些事件的去重状态 |
+
+日志为 JSON 行（stdout），`NODE_TOKEN`/`NAPCAT_ACCESS_TOKEN` 与 `Bearer …`、`access_token=…` 一律打码。
+
+## 模块
+
+| 文件 | 职责 |
+| --- | --- |
+| `bin/bridge.js` | 入口：读 env、建服务、优雅退出 |
+| `src/config.js` | env 解析与校验（含通配 host 拒绝） |
+| `src/onebot.js` | OneBot 11 WS 客户端：握手鉴权、事件解析、action 调用、指数退避重连 |
+| `src/dispatch.js` | 事件 → 入队（群需 @、私聊直通、限流）、结果 → 分段回发、过期文案 |
+| `src/queue.js` | SQLite 任务状态机：queued/delivering/running/done/failed/expired，租约重投 |
+| `src/ratelimit.js` | 每用户 6 次/分钟，提示 5 分钟一次 |
+| `src/blobs.js` | 图片下载（http/base64/file/绝对路径）与 blob 取回 |
+| `src/asr.js` | 语音转写：`get_record` 取 mp3 → 本地 faster-whisper venv → 文本 |
+| `src/http.js` | `/health`、`/node/poll`（长轮询）、`/node/status`、`/node/result`、`/node/ask`、`/node/send`（发一句话；带 `taskId` 时顺手把这一轮的罐头垫话停掉）、`/node/send_image`、`/node/send_file`（把她做好的文件发给主人，只认主人 + `QQ_FILE_ROOTS`）、`/node/remind`、`/blob/<id>` |
+| `src/watchdog.js` | 入站静默监视：心跳停了超过 `INBOUND_SILENT_MS`（默认 180 秒）就替她喊一句「我这边好像收不到消息了」，只喊一次 |
+| `src/ask.js` | `/node/ask` 的等待台：谁在等哪个 taskId 的答案，超时与迟到结果的丢弃 |
+| `src/proactive.js` | 主动开口的闸门：安静时段 / 日额度 / 间隔 / 素材（主人说话、任务跑完、她世界里的新鲜事都算素材） |
+| `src/world-life.js` | 读她的世界事件流、挑没说过又够新鲜的几条、渲染成一段由头；读不到就当没有，绝不影响开口本身 |
+| `src/db.js` `src/log.js` `src/notifier.js` | 建表与 WAL、打码日志、长轮询唤醒 |
+
+`test/` 全部使用假 NapCat WS 服务端桩与假 node HTTP 客户端，不依赖真实 NapCat。
+
+- `test/index.js` 只是聚合入口：Node 24 把 `--test` 的位置参数当 glob，`node --test test/` 会落到
+  目录本身，靠 index 解析才能加载全部用例；`node --test test/*.test.js` 亦可。
+
+## 慢回合里的垫话
+
+一个回合最长可以跑 240 秒，中间一声不响，对面会以为消息丢了。所以跑过 `SLOW_ACK_MS`（默认 22 秒）
+先垫一句，`SLOW_LATE_MS`（90 秒）与 `SLOW_DEEP_MS`（180 秒）再各补一句。
+
+垫的话要分开说：任务还停在 `queued` / `delivering`（node 那一侧在等并发槽，线上最长等过 187 秒）
+说明她连想都还没开始想，这时说「在呢，我想一下」是把排队装成思考，得说「前面那条我还在弄」；
+只有真到 `running` 才是「我想一下」。四组文案都在 `timing.slow*Text` 里，可逐句改。
+
+她自己在回合中途开口（`/node/send` 带 `taskId`）之后，剩下的罐头话一律不发——刚说完一句真话，
+90 秒再补「还在弄」只会显得吵。
+
+## 发文件 `/node/send_file`
+
+她做好的东西（PPT、PDF、表格、压缩包）从这条路交给主人：
+
+```
+POST /node/send_file      Authorization: Bearer $NODE_TOKEN
+{ "path": "/var/lib/dsh-qq-agent/workspace/汇报.pptx", "name": "汇报.pptx" }
+→ { "ok": true, "name": "汇报.pptx", "bytes": 5242880, "fileId": "…" }
+```
+
+- **只发给主人**：收件人由 `OWNER_QQ` 的第一个决定，请求里没有 `to`，也就没有「发给别人」这条路。
+- **只打开 `QQ_FILE_ROOTS` 里的文件**：`path` 先 `realpath`（软链接按真实位置判），再按目录前缀放行，
+  所以 `/etc/shadow`、`/root/.ssh/id_ed25519` 一律 403 `not_in_allowed_roots`。
+  默认 `/var/lib/dsh-qq-agent/workspace:/tmp`——她自己写的东西都在工作区。
+- **内容走 base64**：NapCat 在另一台机器上，传路径过去那边只会说「文件不存在」（语音那 65 次 `retcode=1200` 就是这么来的）。
+  上限 20 MB（base64 之后约 27 MB 上 WebSocket）。
+- 文件名里的路径分隔符一律抹成 `_`，长度截到 100：它要显示在对方的会话列表里，不能让它看起来像去别的地方。
+
+## 语音消息
+
+QQ 语音是 SILK，ffmpeg 解不了；`get_record` 让 NapCat 自己转成 mp3，再由 `scripts/transcribe.py`
+喂给 `/opt/asr-venv` 里的 faster-whisper（small / CPU / int8，模型在 `/opt/asr-models`）。
+转写在 **bridge 内**完成，结果直接拼回 `text`（`[语音] 今天天气不错`）——Task 结构和协议都不用改。
+
+三个 env 全为空即**整条链路关闭**，语音只剩 `[语音]` 标记：
+
+| 变量 | 说明 |
+| --- | --- |
+| `ASR_PYTHON` | 装了 faster-whisper 的解释器，如 `/opt/asr-venv/bin/python` |
+| `ASR_SCRIPT` | `scripts/transcribe.py` 的绝对路径 |
+| `ASR_MODEL_DIR` | 模型目录，默认 `/opt/asr-models` |
+| `ASR_TIMEOUT_MS` | 单条超时，默认 30000 |
+
+任何失败（取不到音频、引擎崩、超时、超过 8 MB）都返回空串并只 warn 一次：
+**听不懂也不能丢消息**。
+
+## 问答 `/node/ask`（文字 / 图片 / 语音）
+
+外部网关（微信之类）借她的大脑答一句话，答案直接回 HTTP，**完全不碰 QQ 投递**。
+
+```
+POST /node/ask            Authorization: Bearer $NODE_TOKEN
+{"text":"在吗，用一句话回我","from":"wechat:wxid_xxx","channel":"wechat","timeoutMs":60000}
+
+200 {"ok":true,"taskId":"…","text":"在呀，我在呢。","ms":2647}
+504 {"ok":false,"error":"timeout","taskId":"…"}
+502 {"ok":false,"error":"agent_failed","taskId":"…","message":"…"}
+400 {"ok":false,"error":"images[0].mime must be one of image/jpeg, image/png, image/webp, image/gif"}
+413 {"ok":false,"error":"images[0] is larger than 6291456 bytes"}
+```
+
+带图带语音的同一句话：
+
+```
+{"text":"这是啥","from":"wechat:wxid_xxx","channel":"wechat",
+ "images":[{"mime":"image/jpeg","dataBase64":"/9j/4AAQ…"}],
+ "audios":[{"mime":"audio/silk","dataBase64":"…"}]}
+```
+
+| 字段 | 规则 |
+| --- | --- |
+| `text` | 1–4000 字，仍必填；语音转出的字会补在它**前面** |
+| `from` | ≤64，就是她在记忆里看到的那个身份 |
+| `channel` | `wechat` / `api`，默认 `api` |
+| `timeoutMs` | 默认 60000，上限 120000 |
+| `images` | 最多 **4** 张；每张解码后 ≤ **6 MiB**；`mime` 只收 `image/jpeg`/`image/png`/`image/webp`/`image/gif` |
+| `audios` | 最多 **2** 条；每条 ≤ **8 MiB**；`mime` 不限（silk/mp3/amr/wav 都行） |
+
+`dataBase64` 是裸 base64，也容忍整串 `data:image/png;base64,…`。图片经 blob 落盘，任务里带
+`{blobId,mime,bytes}`，网关可以 `GET /blob/<id>` 取回原件；语音在入队**之前**转写成 `[语音] …`
+逐行放在 `text` 前面——没配 ASR 或转写失败就降级成 `[语音（没听清）]` 并 warn 一次，
+**绝不因为一条语音听不清就让整次问答失败**。格式错 400，超数量/超体积 413，无 token 401。
+
+任务照旧入队、照旧由 node-plugin 轮询取走、照旧 POST `/node/result`。区别只有一处：这一行带
+`origin:'ask'`，于是 `rowToTask` 多给一个 `deliver:false`，而 `dispatch.deliverResult` 见到
+`origin:'ask'` 直接收摊——**少发一条可以补，错发一条到别人 QQ 上收不回来**。QQ 入站那一侧一个字都没变。
+
+同一个 taskId 只兑现一次；超时之后迟到的结果返回 `{"ok":true,"dropped":true}` 并丢弃，不抛异常、不写别处。
+等待表在内存里：桥重启就等于没人等了，和 PC 通道是同一个取舍。
