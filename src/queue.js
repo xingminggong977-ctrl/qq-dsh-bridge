@@ -205,13 +205,24 @@ export class Queue {
   /**
    * Atomically pick up to `limit` deliverable tasks and lease them.
    * node:sqlite is synchronous, so select + update cannot interleave with another poll.
+   *
+   * 顺序不是纯 FIFO：主人的私聊排在最前，其次群聊，主动搭话排最后。她只有两个并发槽
+   * （`maxConcurrentTurns`），一个群里聊得热闹的下午，他发一句「在吗」本来要等群里那七条
+   * 走完——线上量到过 187 秒、604 秒的等待，全都花在这上面。
    */
   claim({ limit, at = this.now(), leaseMs = DELIVERING_LEASE_MS }) {
     this.reclaimExpiredLeases(at);
     const rows = this.db
       .prepare(
         `SELECT * FROM tasks WHERE status = ? AND deadline_at >= ?
-         ORDER BY received_at ASC, rowid ASC LIMIT ?`,
+         ORDER BY
+           CASE
+             WHEN proactive = 1 THEN 2
+             WHEN is_owner = 1 AND kind = 'private' THEN 0
+             ELSE 1
+           END ASC,
+           received_at ASC, rowid ASC
+         LIMIT ?`,
       )
       .all(STATUS.QUEUED, at, limit);
     if (rows.length === 0) return [];

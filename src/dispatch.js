@@ -365,11 +365,12 @@ export function createDispatch({
       // 回合挂了（超时 / 模型报错）时她一个字都没有，对面只能干等——私聊里说一句总比沉默强。
       // 群里不说：一群人正在聊天时突然插一句「我卡了」是噪音。
       if (!resultOk && text === '' && target && row.needs_reply === 1 && row.is_owner === 1 && row.kind === 'private') {
-        // 超时不是「卡了」，是「还没弄完就撞上了时间墙」——对她说「再发一次」等于让她从头再来一遍。
-        const timedOut = /turn timeout/i.test(String(row.result_error ?? ''));
+        // 超时和工具预算都不是「卡了」，是「还没弄完就停下了」——让她从头再来一遍是最坏的回答。
+        // 插件那边这两种情况上报的 error 分别是 `turn timeout` 与 `tool budget`。
+        const stoppedMidway = /turn timeout|tool budget/i.test(String(row.result_error ?? ''));
         try {
-          await sendReply(target, timedOut ? slowTimeoutText : slowFailureText);
-          log.info(timedOut ? 'timed-out turn explained to the user' : 'failed turn explained to the user', {
+          await sendReply(target, stoppedMidway ? slowTimeoutText : slowFailureText);
+          log.info(stoppedMidway ? 'stopped turn explained to the user' : 'failed turn explained to the user', {
             taskId: row.task_id,
             reason: row.result_error,
           });

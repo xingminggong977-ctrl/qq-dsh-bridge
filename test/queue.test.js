@@ -78,6 +78,21 @@ test('private tasks carry a null groupId', () => {
   assert.equal(rowToTask(row).groupId, null);
 });
 
+test('the owner jumps the queue: his private messages first, then groups, then proactive pings', () => {
+  const { queue, clock } = makeQueue();
+  // 群里先来一条，再隔一秒来一次主动搭话，最后才是他自己的消息：纯 FIFO 会让他排在最后。
+  const group = queue.insertTask(baseTask({ kind: 'group', groupId: '777', replyTarget: { kind: 'group', groupId: '777' } }));
+  clock.advance(1000);
+  const ping = queue.insertTask(
+    baseTask({ kind: 'private', proactive: true, replyTarget: { kind: 'private', userId: '10001' } }),
+  );
+  clock.advance(1000);
+  const owner = queue.insertTask(baseTask({ kind: 'private', replyTarget: { kind: 'private', userId: '10001' } }));
+
+  const claimed = queue.claim({ limit: 3 }).map((row) => row.task_id);
+  assert.deepEqual(claimed, [owner.task_id, group.task_id, ping.task_id]);
+});
+
 test('claim leases a task as delivering for 120s and never double delivers', () => {
   const { queue, clock } = makeQueue();
   const row = queue.insertTask(baseTask());

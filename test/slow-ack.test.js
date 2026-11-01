@@ -1,4 +1,4 @@
-﻿import assert from 'node:assert/strict';
+import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { startWithNapCat } from './helpers/harness.js';
@@ -100,6 +100,23 @@ test('a timed-out turn asks her to continue instead of pretending the turn crash
     label: 'timeout notice',
   });
   assert.ok(!stub.sentTexts.includes('我这边卡了一下，你再说一次好吗？'), '超时不要用「卡了」那句');
+  await waitFor(() => harness.queue.getRow(row.task_id).status === 'failed', { label: 'task settled as failed' });
+});
+
+test('a turn that used up its tool budget also asks her to continue, not to repeat herself', async (t) => {
+  const { stub, harness } = await startWithNapCat(t, { timing: FAST });
+  const row = harness.queue.insertTask(ownerTask());
+  await claimOne(harness);
+
+  await harness.nodeFetch('/node/result', {
+    method: 'POST',
+    body: { taskId: row.task_id, ok: false, text: '', error: 'tool budget' },
+  });
+
+  await waitFor(() => stub.sentTexts.includes('这事儿比我想的费时间，我先停在这儿了。你说句「继续」，我接着弄。'), {
+    label: 'budget notice',
+  });
+  assert.ok(!stub.sentTexts.includes('我这边卡了一下，你再说一次好吗？'), '用完工具预算不是「卡了」');
   await waitFor(() => harness.queue.getRow(row.task_id).status === 'failed', { label: 'task settled as failed' });
 });
 
