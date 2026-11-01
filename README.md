@@ -1,3 +1,25 @@
+# qq-dsh-bridge
+
+**The network half of qq-dsh: QQ goes in, replies come out.**
+
+It holds a WebSocket to [NapCat](https://napcat.napneko.icu/), writes every incoming message
+into a SQLite queue, hands tasks to a worker over plain HTTP, and sends whatever comes back —
+text, voice, images, files. It also owns the things that are annoying to get right: rate
+limits, turn timeouts, the "still working" ladder, reminders, proactive pings, and a watchdog
+that notices when inbound traffic has silently stopped.
+
+## In short
+
+- **You need:** Node 22+ (it uses the built-in `node:sqlite`) and a running NapCat exposing a
+  WebSocket server on port 3001.
+- **Try it:** `npm ci && npm test` — 251 tests, they drive a stub NapCat, so no network, no QQ
+  account and no credentials are required.
+- **Configure it:** every knob is an environment variable read from `/etc/dsh-qq-bridge/env`;
+  the full table is further down this file. Nothing is hard-coded, no secret lives in the repo.
+- **Where to start reading:** `src/http.js` (the contract), `src/dispatch.js` (how a reply is
+  segmented and sent), `src/queue.js` (the SQLite queue).
+
+---
 # dsh-qq-bridge
 
 NapCat(OneBot 11) ⇄ SQLite 队列 ⇄ 本机 DSH node 的云端桥接服务。协议契约见 `../PROTOCOL.md`，
