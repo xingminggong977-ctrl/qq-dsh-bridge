@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import path from 'node:path';
 import test from 'node:test';
 
 import { ConfigError, loadConfig, normalizeHost, parseOwnerList } from '../src/config.js';
@@ -60,8 +61,18 @@ test('env overrides are honoured', () => {
   assert.equal(config.dbPath, './tmp/queue.db');
 });
 
-test('GROUP_MODE accepts mention|all and refuses anything else', () => {
-  assert.equal(loadConfig({ NODE_TOKEN: 'tok', GROUP_MODE: 'mention' }).groupMode, 'mention');
+test('the file whitelist defaults to the workspace only, because the unit has PrivateTmp', () => {
+  // 2026-11-02 现场：服务开了 PrivateTmp=yes，宿主 /tmp 里的文件在 bridge 眼里不存在，
+  // /node/send_file 回 404。默认值再带 /tmp 就只是把人往同一个坑里带。
+  assert.deepEqual(loadConfig({ NODE_TOKEN: 'tok' }).fileRoots, ['/var/lib/dsh-qq-agent/workspace']);
+  assert.deepEqual(
+    loadConfig({ NODE_TOKEN: 'tok', QQ_FILE_ROOTS: ['/srv/out', '/tmp'].join(path.delimiter) }).fileRoots,
+    ['/srv/out', '/tmp'],
+  );
+  assert.deepEqual(loadConfig({ NODE_TOKEN: 'tok', QQ_FILE_ROOTS: 'relative/dir' }).fileRoots, []);
+});
+
+test('GROUP_MODE accepts mention|all and refuses anything else', () => {  assert.equal(loadConfig({ NODE_TOKEN: 'tok', GROUP_MODE: 'mention' }).groupMode, 'mention');
   assert.equal(loadConfig({ NODE_TOKEN: 'tok', GROUP_MODE: ' all ' }).groupMode, 'all');
   for (const bad of ['everyone', 'ALL', 'mention,all', '0', 'true']) {
     assert.throws(

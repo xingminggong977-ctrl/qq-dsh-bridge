@@ -1,25 +1,3 @@
-# qq-dsh-bridge
-
-**The network half of qq-dsh: QQ goes in, replies come out.**
-
-It holds a WebSocket to [NapCat](https://napcat.napneko.icu/), writes every incoming message
-into a SQLite queue, hands tasks to a worker over plain HTTP, and sends whatever comes back —
-text, voice, images, files. It also owns the things that are annoying to get right: rate
-limits, turn timeouts, the "still working" ladder, reminders, proactive pings, and a watchdog
-that notices when inbound traffic has silently stopped.
-
-## In short
-
-- **You need:** Node 22+ (it uses the built-in `node:sqlite`) and a running NapCat exposing a
-  WebSocket server on port 3001.
-- **Try it:** `npm ci && npm test` — 260 tests, they drive a stub NapCat, so no network, no QQ
-  account and no credentials are required.
-- **Configure it:** every knob is an environment variable read from `/etc/dsh-qq-bridge/env`;
-  the full table is further down this file. Nothing is hard-coded, no secret lives in the repo.
-- **Where to start reading:** `src/http.js` (the contract), `src/dispatch.js` (how a reply is
-  segmented and sent), `src/queue.js` (the SQLite queue).
-
----
 # dsh-qq-bridge
 
 NapCat(OneBot 11) ⇄ SQLite 队列 ⇄ 本机 DSH node 的云端桥接服务。协议契约见 `../PROTOCOL.md`，
@@ -49,7 +27,7 @@ node --test test/           # 或 npm test
 | `INBOUND_SILENT_MS` | `180000` | WebSocket 连着却不来任何帧超过这么久，就给主人发一句「我这边好像收不到消息了」。NapCat 每 30 秒推一次心跳，正常聊天碰不到这个阈值 |
 | `DB_PATH` | `/var/lib/dsh-qq-bridge/queue.db` | |
 | `BLOB_DIR` | `/var/lib/dsh-qq-bridge/blobs` | 图片落盘目录 |
-| `QQ_FILE_ROOTS` | `/var/lib/dsh-qq-agent/workspace:/tmp` | `/node/send_file` 肯打开哪些目录（分隔符跟平台走）。这是那条路由的全部安全性：路径先 `realpath` 再按前缀判，`/etc/shadow` 发不出去 |
+| `QQ_FILE_ROOTS` | `/var/lib/dsh-qq-agent/workspace` | `/node/send_file` 肯打开哪些目录（分隔符跟平台走）。默认**不含 `/tmp``：线上单元开了 `PrivateTmp=yes`，服务眼里的 `/tmp` 是它自己的私有目录（2026-11-02 自检得到 `404 file not found`）。这是那条路由的全部安全性：路径先 `realpath` 再按前缀判，`/etc/shadow` 发不出去 |
 | `PROACTIVE_ENABLED` | `on` | `off` 一次关掉「主动开口」 |
 | `PROACTIVE_MAX_PER_DAY` | `30` | 主动发出的条数上限（线上现设 **4**） |
 | `PROACTIVE_SPREAD_OVER_DAY` | `on` | 额度按时间摊开：到 25% 的钟点最多 1 条、50% 最多 2 条……否则早上就能把一天的说完，晚上一句没有 |

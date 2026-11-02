@@ -1,4 +1,4 @@
-﻿import path from 'node:path';
+import path from 'node:path';
 
 export class ConfigError extends Error {
   constructor(message) {
@@ -97,8 +97,12 @@ export function loadConfig(env = process.env) {
     dbPath: readString(env, 'DB_PATH', '/var/lib/dsh-qq-bridge/queue.db'),
     blobDir: readString(env, 'BLOB_DIR', '/var/lib/dsh-qq-bridge/blobs'),
     // /node/send_file 能把服务器上的文件发到 QQ，所以只肯打开这几个目录：她要发的是她自己
-    // 做好的东西（工作区、/tmp 里的产物），不该顺手把 /etc/shadow 发出去。
-    fileRoots: parsePathList(readString(env, 'QQ_FILE_ROOTS', '/var/lib/dsh-qq-agent/workspace:/tmp')),
+    // 做好的东西（工作区里的产物），不该顺手把 /etc/shadow 发出去。
+    //
+    // 默认不再带 /tmp：线上单元开了 PrivateTmp=yes，服务眼里的 /tmp 是它自己的私有目录，
+    // 2026-11-02 用 /tmp 里的图自检就得到 404 file not found（文件明明在宿主 /tmp 里）。
+    // 需要临时目录就把 QQ_FILE_ROOTS 显式加上，并记得那台机器上 PrivateTmp 得是关的。
+    fileRoots: parsePathList(readString(env, 'QQ_FILE_ROOTS', '/var/lib/dsh-qq-agent/workspace')),
     groupMode,
     // Voice notes arrive as SILK, which nothing here can decode; NapCat's
     // get_record hands back mp3 and this venv turns that into text. An empty
