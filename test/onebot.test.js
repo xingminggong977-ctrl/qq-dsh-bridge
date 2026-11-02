@@ -109,7 +109,9 @@ test('a dropped NapCat connection is retried', async (t) => {
   for (const connection of stub.connections) connection.socket.destroy();
   await waitFor(() => stub.openCount === 0, { label: 'socket closed' });
   await waitFor(() => stub.openCount === 1, { label: 'reconnect', timeoutMs: 8000 });
-  assert.equal(harness.onebot.connected, true);
+  // openCount 只是桩这侧收下了连接；connected 要等客户端的 'open' 事件真正跑到。
+  // 线上 3 核机上这两步之间能差几十毫秒，直接断言会偶发失败（我抓到过一次）。
+  await waitFor(() => harness.onebot.connected === true, { label: 'connected flag', timeoutMs: 8000 });
   assert.ok(stub.upgradeHeaders.length >= 2);
 });
 

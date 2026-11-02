@@ -360,7 +360,15 @@ export function createHttpServer({
     const fallbackName = path.basename(real);
     const rawName = typeof body.name === 'string' && body.name.trim() !== '' ? body.name.trim() : fallbackName;
     const name = rawName.replace(/[/\\]/g, '_').slice(0, FILE_NAME_MAX_CHARS);
-    const response = await dispatch.sendFile({ kind: 'private', userId: owner }, real, name);
+    // 先记一笔再发：NapCat 拒收（retcode 1200）时，光有「request failed」看不出是哪个文件。
+    log.info('node/send file attempt', { to: owner, name, bytes: stat.size });
+    let response;
+    try {
+      response = await dispatch.sendFile({ kind: 'private', userId: owner }, real, name);
+    } catch (error) {
+      log.warn('node/send file rejected', { to: owner, name, bytes: stat.size, reason: error?.message ?? String(error) });
+      throw error;
+    }
     // 文件名进日志，内容不进。
     log.info('node/send file', { to: owner, name, bytes: stat.size, ok: true });
     return sendJson(res, 200, { ok: true, name, bytes: stat.size, fileId: response?.data?.file_id ?? null });
