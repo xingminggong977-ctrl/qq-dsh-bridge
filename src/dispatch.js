@@ -210,6 +210,14 @@ export function createDispatch({
   const slowFailureText = timing.slowFailureText ?? '我这边卡了一下，你再说一次好吗？';
   // 超时的回合往往干到一半（样本：一口气 41 步在做 PPT），说「卡了」既不准也没下文。
   const slowTimeoutText = timing.slowTimeoutText ?? '这事儿比我想的费时间，我先停在这儿了。你说句「继续」，我接着弄。';
+/**
+ * 该回话、却回了个空包时，替她说的那一句。
+ *
+ * 2026-11-01 16:08 那次：要发的文字全是空白字符，`text !== ''` 放过了它，
+ * NapCat 用 retcode=1200 拒发，对面看到的是十几秒的沉默。空包不该发出去，
+ * 也不该就这么算了——他在等一句回答。
+ */
+const emptyReplyText = timing.emptyReplyText ?? '我在，你说。';
   const slowAcks = new Map();
   // 这一轮她已经自己开口过的任务：垫话阶梯对这些任务静默（见 `markSpoke`）。
   const spokeEarly = new Set();
@@ -402,18 +410,30 @@ export function createDispatch({
           log.error('failure notice failed', { taskId: row.task_id, reason: error.message });
         }
       }
-      if (text !== '' && target) {
+      // 空白字符串不等于「有话要说」：它躲得过 `text !== ''`，但送出去就是一个空包。
+      const spoken = typeof text === 'string' ? text.trim() : '';
+      const expectsAnswer = row.needs_reply === 1 && row.is_owner === 1 && row.kind === 'private';
+      let replyText = text;
+      if (spoken === '') {
+        if (expectsAnswer) {
+          replyText = emptyReplyText;
+          log.warn('empty reply replaced with a fallback line', { taskId: row.task_id, chars: text.length });
+        } else {
+          replyText = '';
+        }
+      }
+      if (replyText !== '' && target) {
         try {
-          const audio = await speakInstead(target, row, text);
+          const audio = await speakInstead(target, row, replyText);
           if (audio) {
             try {
               await sendVoice(target, audio.file);
             } catch (error) {
               log.warn('qq voice send failed, falling back to text', { taskId: row.task_id, reason: error.message });
-              await sendReply(target, text);
+              await sendReply(target, replyText);
             }
           } else {
-            await sendReply(target, text);
+            await sendReply(target, replyText);
           }
         } catch (error) {
           delivered = false;
@@ -427,7 +447,7 @@ export function createDispatch({
         status: finished?.status,
         resultOk,
         delivered,
-        segments: chunkText(text, segmentChars).length,
+        segments: chunkText(replyText, segmentChars).length,
       });
     })();
     return track(row.task_id, promise);

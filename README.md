@@ -12,7 +12,7 @@ that notices when inbound traffic has silently stopped.
 
 - **You need:** Node 22+ (it uses the built-in `node:sqlite`) and a running NapCat exposing a
   WebSocket server on port 3001.
-- **Try it:** `npm ci && npm test` — 256 tests, they drive a stub NapCat, so no network, no QQ
+- **Try it:** `npm ci && npm test` — 258 tests, they drive a stub NapCat, so no network, no QQ
   account and no credentials are required.
 - **Configure it:** every knob is an environment variable read from `/etc/dsh-qq-bridge/env`;
   the full table is further down this file. Nothing is hard-coded, no secret lives in the repo.
@@ -132,6 +132,16 @@ node --test test/           # 或 npm test
 
 这两种情况都不是「卡了」——她已经干到一半了，让她从头再说一遍是最坏的回答。群里、`ask` 任务、
 不是 `needs_reply` 的消息都不会收到这句。
+
+### 空回复也别发出去
+
+`text !== ''` 挡不住「全是空白字符」：2026-11-01 16:08 的那次就是这样，一串看不见的字符被送出去，
+NapCat 用 `retcode=1200` 拒发，对面只看到十几秒的沉默。现在发送前先 `trim()` 判空：
+
+| 情况 | 结果 |
+|---|---|
+| 去掉空白后为空，且这轮**该回话**（`needs_reply` + 主人私聊） | 改发一句「我在，你说。」，日志 `empty reply replaced with a fallback line` |
+| 去掉空白后为空，但没人要回答（群里的上下文消息、主动搭话自己收回） | 什么都不发，也不记 `task finished` 的分段数 |
 
 ## 发文件 `/node/send_file`
 
