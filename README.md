@@ -143,6 +143,21 @@ NapCat 用 `retcode=1200` 拒发，对面只看到十几秒的沉默。现在发
 | 去掉空白后为空，且这轮**该回话**（`needs_reply` + 主人私聊） | 改发一句「我在，你说。」，日志 `empty reply replaced with a fallback line` |
 | 去掉空白后为空，但没人要回答（群里的上下文消息、主动搭话自己收回） | 什么都不发，也不记 `task finished` 的分段数 |
 
+### 这些时间点能不能改
+
+垫话、兜底、收尾都读同一个 `timing` 对象（`createApp({ timing })` 传进来，与 `DEFAULT_TIMING` 合并），
+所以不用改代码就能调：
+
+| 键 | 默认 | 什么时候说话 |
+|---|---|---|
+| `slowAckMs` / `slowAckText` | `22000` / 「在呢，我想一下。」 | 任务还在跑，22 秒没动静 |
+| `slowLateMs` / `slowLateText` | `90000` / 「还在弄，别急，一会儿就说。」 | 90 秒 |
+| `slowDeepMs` / `slowDeepText` | `180000` / 「这条比平时长，我还在弄。」 | 180 秒 |
+| `slowQueuedText` / `slowQueuedLateText` / `slowQueuedDeepText` | 见 `dispatch.js` | 同上三档，但任务是 `queued`/`delivering`（在等并发槽，不是在想） |
+| `slowTimeoutText` | 「这事儿比我想的费时间，我先停在这儿了。你说句「继续」，我接着弄。」 | 撞上 `turn timeout` 或 `tool budget` |
+| `slowFailureText` | 「我这边卡了一下，你再说一次好吗？」 | 真的挂了，且不是上面两种 |
+| `emptyReplyText` | 「我在，你说。」 | 去掉空白后正文为空，且这轮该回话 |
+| `segmentChars` / `segmentDelayMs` | `1800` / `300` | 长回复怎么切段、段间停多久 |
 ## 发文件 `/node/send_file`
 
 她做好的东西（PPT、PDF、表格、压缩包）从这条路交给主人：
