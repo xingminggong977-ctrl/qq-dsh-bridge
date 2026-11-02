@@ -12,7 +12,7 @@ that notices when inbound traffic has silently stopped.
 
 - **You need:** Node 22+ (it uses the built-in `node:sqlite`) and a running NapCat exposing a
   WebSocket server on port 3001.
-- **Try it:** `npm ci && npm test` — 251 tests, they drive a stub NapCat, so no network, no QQ
+- **Try it:** `npm ci && npm test` — 256 tests, they drive a stub NapCat, so no network, no QQ
   account and no credentials are required.
 - **Configure it:** every knob is an environment variable read from `/etc/dsh-qq-bridge/env`;
   the full table is further down this file. Nothing is hard-coded, no secret lives in the repo.
