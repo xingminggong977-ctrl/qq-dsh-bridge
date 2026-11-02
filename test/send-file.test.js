@@ -89,3 +89,44 @@ test('POST /node/send_file says 404 when the file is not there', async (t) => {
   assert.equal(reply.status, 404);
   assert.equal(reply.body.error, 'file not found');
 });
+
+test('a picture goes out as a picture, so it shows up in the chat instead of a download card', async (t) => {
+  const root = tempWorkspace(t);
+  const file = path.join(root, 'chart.png');
+  fs.writeFileSync(file, Buffer.alloc(256, 7));
+  const { harness, stub } = await withHarness(t, root);
+
+  const reply = await harness.nodeFetch('/node/send_file', {
+    method: 'POST',
+    body: { path: file },
+  });
+
+  assert.equal(reply.status, 200);
+  assert.equal(reply.body.inline, true);
+  assert.equal(reply.body.bytes, 256);
+  const sent = stub.actions.at(-1);
+  assert.equal(sent.action, 'send_private_msg');
+  assert.equal(sent.params.message[0].type, 'image');
+  assert.ok(String(sent.params.message[0].data.file).startsWith('base64://'));
+});
+
+test('when the picture is refused, it still goes out as a file rather than not at all', async (t) => {
+  const root = tempWorkspace(t);
+  const file = path.join(root, 'chart.jpg');
+  fs.writeFileSync(file, Buffer.alloc(128, 9));
+  const { harness, stub } = await withHarness(t, root);
+  stub.actionHandler = (record) =>
+    record.action === 'send_private_msg' ? { status: 'failed', retcode: 1200 } : null;
+
+  const reply = await harness.nodeFetch('/node/send_file', {
+    method: 'POST',
+    body: { path: file },
+  });
+
+  assert.equal(reply.status, 200);
+  assert.equal(reply.body.ok, true);
+  assert.equal(reply.body.inline, undefined, '退回文件通道时不该声称是图片');
+  assert.equal(stub.actions.at(-1).action, 'upload_private_file');
+  assert.equal(stub.actions.at(-1).params.name, 'chart.jpg');
+});
+

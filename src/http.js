@@ -360,6 +360,30 @@ export function createHttpServer({
     const fallbackName = path.basename(real);
     const rawName = typeof body.name === 'string' && body.name.trim() !== '' ? body.name.trim() : fallbackName;
     const name = rawName.replace(/[/\\]/g, '_').slice(0, FILE_NAME_MAX_CHARS);
+    // 图片按图片发：文件卡片要下载一次才看得见，截图和图表直接显示更好。
+    // 失败一律退回文件通道——base64 图片在个别 NapCat 版本上会被 1200 拒掉，
+    // 那时候她至少还能把图当文件交出去，而不是两边都不知道发生了什么。
+    const ext = path.extname(real).toLowerCase();
+    if (IMAGE_EXTENSIONS.has(ext) && stat.size <= IMAGE_MAX_BYTES) {
+      try {
+        const sent = await dispatch.sendImage({ kind: 'private', userId: owner }, real);
+        log.info('node/send file as inline image', { to: owner, name, bytes: stat.size });
+        return sendJson(res, 200, {
+          ok: true,
+          name,
+          bytes: stat.size,
+          inline: true,
+          messageId: sent?.data?.message_id ?? null,
+        });
+      } catch (error) {
+        log.warn('inline image rejected, falling back to a file', {
+          name,
+          bytes: stat.size,
+          reason: error?.message ?? String(error),
+        });
+      }
+    }
+
     // 先记一笔再发：NapCat 拒收（retcode 1200）时，光有「request failed」看不出是哪个文件。
     log.info('node/send file attempt', { to: owner, name, bytes: stat.size });
     let response;

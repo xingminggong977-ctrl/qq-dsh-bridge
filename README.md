@@ -12,7 +12,7 @@ that notices when inbound traffic has silently stopped.
 
 - **You need:** Node 22+ (it uses the built-in `node:sqlite`) and a running NapCat exposing a
   WebSocket server on port 3001.
-- **Try it:** `npm ci && npm test` — 258 tests, they drive a stub NapCat, so no network, no QQ
+- **Try it:** `npm ci && npm test` — 260 tests, they drive a stub NapCat, so no network, no QQ
   account and no credentials are required.
 - **Configure it:** every knob is an environment variable read from `/etc/dsh-qq-bridge/env`;
   the full table is further down this file. Nothing is hard-coded, no secret lives in the repo.
@@ -175,6 +175,10 @@ POST /node/send_file      Authorization: Bearer $NODE_TOKEN
 - **内容走 base64**：NapCat 在另一台机器上，传路径过去那边只会说「文件不存在」（语音那 65 次 `retcode=1200` 就是这么来的）。
   上限 20 MB（base64 之后约 27 MB 上 WebSocket）。
 - 文件名里的路径分隔符一律抹成 `_`，长度截到 100：它要显示在对方的会话列表里，不能让它看起来像去别的地方。
+- **图片按图片发**：`.png/.jpg/.jpeg/.gif/.webp/.bmp` 且 ≤ 10 MB 时走 `send_private_msg` 的 `image` 段，
+  会话里直接看得见（文件卡片要下载一次才打开）。这条一旦被 NapCat 拒（个别版本对 base64 图片会回 1200），
+  自动退回 `upload_private_file`——宁可对方多下载一次，也不能什么都不发。
+  返回体里 `inline: true` 表示它是图片段发的。
 
 ## 一条消息里她到底看得见什么
 
