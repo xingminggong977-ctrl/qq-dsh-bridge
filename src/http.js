@@ -196,8 +196,8 @@ export function createHttpServer({
     if (!/^\d{5,12}$/.test(to)) throw badRequest('to must be a QQ number');
     try {
       const created = reminders.add({ at, text, target: JSON.stringify({ kind: 'private', userId: to }), atNow: now() });
-      log.info('reminder accepted', { reminderId: created.reminderId, at: created.at });
-      return sendJson(res, 200, { ok: true, reminderId: created.reminderId, at: created.at });
+      log.info('reminder accepted', { reminderId: created.reminderId, at: created.at, duplicate: created.duplicate === true });
+      return sendJson(res, 200, { ok: true, reminderId: created.reminderId, at: created.at, duplicate: created.duplicate === true });
     } catch (err) {
       if (err.code === undefined) throw err;
       return sendJson(res, 400, { ok: false, error: err.message });

@@ -6,6 +6,9 @@ export const REMINDER_MAX_AHEAD_MS = 30 * 24 * 60 * 60 * 1000;
 /** 到点后多久还算「该发」：进程重启错过几分钟也要补发，错过太久就当没这条。 */
 export const REMINDER_GRACE_MS = 30 * 60 * 1000;
 
+/** 同一句话在同一个时间的这个窗口内再排一次，算重复，不再入库。 */
+export const REMINDER_DUPLICATE_WINDOW_MS = 5 * 60 * 1000;
+
 const TEXT_MAX_CHARS = 200;
 
 export class ReminderError extends Error {
@@ -47,6 +50,21 @@ export function createReminderStore({ db, log = () => {}, now = () => Date.now()
       if (body === '') throw new ReminderError('要提醒什么？', { code: 'empty' });
       if (body.length > TEXT_MAX_CHARS) throw new ReminderError(`最多 ${TEXT_MAX_CHARS} 字`, { code: 'too-long' });
       if (typeof target !== 'string' || target === '') throw new ReminderError('不知道发给谁', { code: 'no-target' });
+
+      // 同一件事、同一个时间、同一个收件人，排第二遍就是重复。
+      // 线上真发生过：她自己排过一条「七点给爸爸打电话」，第二天早上又不放心地排了一遍，
+      // 于是到点会收到两条一模一样的提醒。这里只收一条，并把已有的那条还回去。
+      const twin = db
+        .prepare(
+          `SELECT reminder_id, at_ms FROM reminders
+           WHERE fired_at IS NULL AND target = ? AND text = ? AND ABS(at_ms - ?) <= ?
+           ORDER BY at_ms LIMIT 1`,
+        )
+        .get(target, body, atMs, REMINDER_DUPLICATE_WINDOW_MS);
+      if (twin !== undefined) {
+        log.info('reminder already scheduled', { reminderId: twin.reminder_id, atMs: twin.at_ms, askedFor: atMs });
+        return { reminderId: twin.reminder_id, at: twin.at_ms, text: body, duplicate: true };
+      }
 
       const reminderId = randomUUID();
       db.prepare('INSERT INTO reminders (reminder_id, at_ms, text, target, created_at) VALUES (?, ?, ?, ?, ?)')

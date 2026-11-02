@@ -1,4 +1,4 @@
-﻿import assert from 'node:assert/strict';
+import assert from 'node:assert/strict';
 import test from 'node:test';
 
 import { openDb } from '../src/db.js';
@@ -21,6 +21,26 @@ test('add() keeps the text one line and rejects times that cannot be honoured', 
   assert.throws(() => reminders.add({ at: now() - 1, text: '过去', target: '{}' }), /已经过去/);
   assert.throws(() => reminders.add({ at: now() + 40 * 24 * 3600_000, text: '太远', target: '{}' }), /太远/);
   assert.throws(() => reminders.add({ at: now() + 60_000, text: '   ', target: '{}' }), /提醒什么/);
+});
+
+test('the same reminder asked for twice is stored once and handed back as a duplicate', () => {
+  const clock = 1_800_000_000_000;
+  const { reminders } = store(() => clock);
+  const target = '{"kind":"private","userId":"10001"}';
+  const at = clock + 12 * 3600_000;
+
+  const first = reminders.add({ at, text: '七点了，记得给爸爸打个电话呀。', target });
+  // 线上真发生过：她自己排过一次，第二天早上又不放心地排了一遍。
+  const again = reminders.add({ at, text: '七点了，记得给爸爸打个电话呀。', target });
+  assert.equal(again.duplicate, true, '第二遍要说是重复');
+  assert.equal(again.reminderId, first.reminderId, '重复时把已有的那条还回去');
+  assert.equal(reminders.pending(clock).length, 1, '到点只说一次');
+
+  // 差一点点的同一句话（比如她自己改了口径）不算重复。
+  const shifted = reminders.add({ at: at + 10 * 60_000, text: '七点了，记得给爸爸打个电话呀。', target });
+  assert.equal(shifted.duplicate, undefined, '差了十分钟是新的一条');
+  assert.notEqual(shifted.reminderId, first.reminderId);
+  assert.equal(reminders.pending(clock).length, 2);
 });
 
 test('due() hands back only what is due, and expires stale rows instead of firing them', () => {
