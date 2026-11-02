@@ -38,6 +38,8 @@ export class OneBotClient {
     this.selfId = null;
     this.pending = new Map();
     this.reconnectTimer = null;
+    // 等连接回来的排队者：掉线的那几秒里要发出去的话，先在这里等，而不是直接判死。
+    this.readyWaiters = new Set();
   }
 
   start() {
@@ -82,6 +84,7 @@ export class OneBotClient {
       this.attempts = 0;
       this.lastFrameAt = this.now();
       this.log.info('napcat websocket connected', { url: sanitizeUrl(this.url) });
+      this.resolveWaiters();
     });
 
     socket.addEventListener('message', (event) => {
@@ -139,6 +142,38 @@ export class OneBotClient {
         this.onEvent(frame);
       }
     }
+  }
+
+  /**
+   * 等到连接可用：已经连着就立刻返回，否则最多等 timeoutMs。
+   *
+   * 2026-11-02 线上：18:00 和 18:34 各有一次「napcat websocket is not connected」，
+   * 1/2/4 秒三次重试全在同一段掉线里烧完，那句话就这么丢了。掉线是秒级的事，
+   * 发送端等它回来，比把它判死更接近人想要的结果。
+   */
+  whenConnected({ timeoutMs = 20000 } = {}) {
+    if (this.connected && this.ws) return Promise.resolve();
+    return new Promise((resolve, reject) => {
+      let timer = null;
+      const waiter = {
+        resolve: () => {
+          if (timer) clearTimeout(timer);
+          this.readyWaiters.delete(waiter);
+          resolve();
+        },
+      };
+      timer = setTimeout(() => {
+        this.readyWaiters.delete(waiter);
+        reject(new Error(`napcat websocket did not come back within ${timeoutMs}ms`));
+      }, timeoutMs);
+      timer.unref?.();
+      this.readyWaiters.add(waiter);
+    });
+  }
+
+  resolveWaiters() {
+    for (const waiter of [...this.readyWaiters]) waiter.resolve();
+    this.readyWaiters.clear();
   }
 
   /** echo-correlated OneBot action call; resolves with the raw response frame. */

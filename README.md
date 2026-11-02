@@ -1,5 +1,30 @@
 # dsh-qq-bridge
 
+**The network half: QQ goes in, replies come out.**
+
+A single Node process that holds a WebSocket to NapCat (OneBot 11), keeps every inbound
+message in a SQLite queue, and hands the work to a DSH node over HTTP. It owns the parts
+that must survive a restart: the queue, the lease that stops a dead worker from holding a
+message hostage, reminders, and the outbound send path.
+
+**At a glance**
+
+```
+QQ  ──NapCat(WS 3001)──▶  bridge  ──/node/poll──▶  DSH node (the agent)
+                            │  ▲                        │
+                     queue.db│  └──/node/result─────────┘
+                            ▼
+                     /node/send, /node/send_file, /node/remind  →  back out to QQ
+```
+
+- **263 tests, no network needed**: `npm test` drives a stub NapCat, so it runs anywhere Node 24 runs.
+- **Zero runtime dependencies.** `node:http`, `node:sqlite`, `node:crypto`, global `WebSocket` and `fetch`.
+- **Started where the protocol lives**: `src/http.js` (routes), `src/dispatch.js` (sending, slow-turn
+  acknowledgements, voice/image/file), `src/queue.js` (claim order, leases).
+
+Node 22+ is enough for `node:sqlite` on recent releases; Node 24 is what this is tested on.
+
+---
 NapCat(OneBot 11) ⇄ SQLite 队列 ⇄ 本机 DSH node 的云端桥接服务。协议契约见 `../PROTOCOL.md`，
 本实现不增删任何字段或端点。
 
@@ -100,6 +125,16 @@ node --test test/           # 或 npm test
 
 另外两条边界写在 `add()` 里：时间必须比现在晚 1 秒以上、不能超过 30 天；`due()` 会把迟到超过
 30 分钟的行直接判死（重启之后不把三天前的提醒砸过去）。
+
+## 掉线的那几秒，话先等着
+
+`sendChunk` 原来只会重试三次（1s / 2s / 4s）。2026-11-02 线上暴露了它的短处：08:34 和 10:00（UTC）
+各有一次 `napcat websocket is not connected`，三次重试全烧在同一段断线里，那句话**永久丢了**——
+对面只看到一段沉默，而她这边以为已经说过了。
+
+现在发送前先 `whenConnected()`：连着就立刻发；掉线就等它回来（默认最多 20 秒，`timing.waitForSocketMs`
+可调），重试途中再遇到「not connected / closed」也会再等一次。等不到才报错，日志是
+`waited for napcat to come back` 与 `napcat did not come back in time`。
 
 ## 回合挂了要说话
 

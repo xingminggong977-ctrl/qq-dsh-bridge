@@ -191,6 +191,7 @@ export function createDispatch({
   const segmentChars = timing.segmentChars ?? 1800;
   const segmentDelayMs = timing.segmentDelayMs ?? 300;
   const sendBackoffMs = timing.sendBackoffMs ?? [1000, 2000, 4000];
+  const waitForSocketMs = timing.waitForSocketMs ?? 20000;
   // 慢回合先垫一句：她 180 秒的上限里，超过这么久还没结果就先让对面知道有人在。
   const slowAckMs = timing.slowAckMs ?? 22_000;
   const slowAckText = timing.slowAckText ?? '在呢，我想一下。';
@@ -240,6 +241,26 @@ const emptyReplyText = timing.emptyReplyText ?? '我在，你说。';
     if (event && event.self_id !== undefined && event.self_id !== null) selfId = String(event.self_id);
   }
 
+  /**
+   * 掉线的时候先等它回来再发。
+   *
+   * 2026-11-02 线上两次 `napcat websocket is not connected`（08:34、10:00 UTC），
+   * 1/2/4 秒的三次重试全烧在同一段断线里，那句话就永久丢了。掉线是秒级的，
+   * 发送端等一会儿比直接判死更接近人想要的结果。
+   */
+  async function waitForSocket(client, reason) {
+    if (client.connected === true) return true;
+    if (typeof client.whenConnected !== 'function') return false;
+    try {
+      await client.whenConnected({ timeoutMs: waitForSocketMs });
+      log.info('waited for napcat to come back', { reason, waitedMs: waitForSocketMs });
+      return true;
+    } catch (error) {
+      log.warn('napcat did not come back in time', { reason, detail: error.message });
+      return false;
+    }
+  }
+
   async function sendChunk(target, text) {
     const client = getClient();
     if (!client) throw new Error('onebot client unavailable');
@@ -251,6 +272,7 @@ const emptyReplyText = timing.emptyReplyText ?? '我在，你说。';
     };
     const attempts = sendBackoffMs.length + 1; // 3 retries after the first try (1s/2s/4s)
     let lastError = null;
+    await waitForSocket(client, 'before send');
     for (let attempt = 1; attempt <= attempts; attempt += 1) {
       if (attempt > 1) await sleep(sendBackoffMs[attempt - 2]);
       try {
@@ -261,6 +283,7 @@ const emptyReplyText = timing.emptyReplyText ?? '我在，你说。';
       } catch (error) {
         lastError = error;
         log.warn('qq send attempt failed', { action, attempt, attempts, reason: error.message });
+        if (/not connected|websocket closed/i.test(error.message)) await waitForSocket(client, `after attempt ${attempt}`);
       }
     }
     throw lastError ?? new Error(`${action} failed`);
